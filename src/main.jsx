@@ -13,21 +13,29 @@ const HIGH_QUALITY_CONFIG = {
   output: { format: 'image/png', quality: 1 },
 };
 
-async function refineAlphaEdges(blob) {
+async function restoreOriginalResolution(originalFile, segmentedBlob) {
   try {
-    const bitmap = await createImageBitmap(blob);
+    const original = await createImageBitmap(originalFile);
+    const segmented = await createImageBitmap(segmentedBlob);
     const canvas = document.createElement('canvas');
-    canvas.width = bitmap.width; canvas.height = bitmap.height;
+    const maskCanvas = document.createElement('canvas');
+    canvas.width = original.width; canvas.height = original.height;
+    maskCanvas.width = original.width; maskCanvas.height = original.height;
     const context = canvas.getContext('2d', { willReadFrequently: true });
-    context.drawImage(bitmap, 0, 0); bitmap.close();
-    const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
-    for (let index = 3; index < imageData.data.length; index += 4) {
-      if (imageData.data[index] <= 8) imageData.data[index] = 0;
+    const maskContext = maskCanvas.getContext('2d', { willReadFrequently: true });
+    context.drawImage(original, 0, 0);
+    maskContext.drawImage(segmented, 0, 0, original.width, original.height);
+    original.close(); segmented.close();
+    const pixels = context.getImageData(0, 0, canvas.width, canvas.height);
+    const mask = maskContext.getImageData(0, 0, maskCanvas.width, maskCanvas.height);
+    for (let index = 3; index < pixels.data.length; index += 4) {
+      pixels.data[index] = mask.data[index];
+      if (pixels.data[index] <= 8) pixels.data[index] = 0;
     }
-    context.putImageData(imageData, 0, 0);
-    return await new Promise((resolve) => canvas.toBlob(resolve, 'image/png', 1)) || blob;
+    context.putImageData(pixels, 0, 0);
+    return await new Promise((resolve) => canvas.toBlob(resolve, 'image/png', 1)) || segmentedBlob;
   } catch {
-    return blob;
+    return segmentedBlob;
   }
 }
 
@@ -92,7 +100,7 @@ function App() {
     setIsProcessing(true); setError(''); setProgress(0); setStatus('Loading the AI model in your browser…');
     try {
       const output = await removeBackground(file, { ...HIGH_QUALITY_CONFIG, progress: (key, current, total) => { const percent = total ? Math.min(99, Math.round((current / total) * 100)) : 0; setProgress(percent); setStatus(key?.includes('fetch') ? 'Downloading the full-quality AI model…' : 'Removing background with high precision…'); } });
-      const refinedOutput = await refineAlphaEdges(output);
+      const refinedOutput = await restoreOriginalResolution(file, output);
       setResultUrl(URL.createObjectURL(refinedOutput)); setProgress(100); setStatus('Done! High-quality transparent PNG is ready.');
     } catch (processingError) { console.error(processingError); setError('Could not process this image. Please try another image.'); setStatus('Something went wrong while processing.'); }
     finally { setIsProcessing(false); }
@@ -108,7 +116,7 @@ function Home({ inputRef, file, originalUrl, resultUrl, isDragging, setIsDraggin
   return <main className="home-page"><section className="hero"><div className="hero-logo"><img src="/logo.png" alt="Platka logo" /></div><p className="eyebrow">PRIVATE · FAST · FREE</p><h1>Remove Background<br /><span>Images</span></h1><p className="subtitle">Remove image backgrounds automatically, right in your browser.</p><div className="quality-badge">✦ Full precision AI · Lossless PNG · Local processing</div></section><section className="tool-card">{!file ? <><div className={`drop-zone ${isDragging ? 'dragging' : ''}`} onDragOver={(event) => { event.preventDefault(); setIsDragging(true); }} onDragLeave={() => setIsDragging(false)} onDrop={(event) => { event.preventDefault(); setIsDragging(false); selectFile(event.dataTransfer.files?.[0]); }} onClick={() => inputRef.current?.click()} role="button" tabIndex="0" onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') inputRef.current?.click(); }}><div className="upload-icon">↑</div><h2>Drag & drop an image here</h2><p>or click to browse from your device</p><span className="file-hint">JPG · PNG · WEBP <b>•</b> Max. 10 MB</span><input ref={inputRef} type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => selectFile(event.target.files?.[0])} hidden /></div><div className="source-options"><span className="source-divider"><i /> or <i /></span><p className="paste-tip">Paste an image from your clipboard with <kbd>Ctrl</kbd> + <kbd>V</kbd></p><form className="url-form" onSubmit={loadFromUrl}><input value={imageUrl} onChange={(event) => setImageUrl(event.target.value)} placeholder="Paste an image URL" aria-label="Image URL" /><button type="submit" disabled={isLoadingUrl}>{isLoadingUrl ? 'Loading…' : 'Use URL'}</button></form></div></> : <><div className="preview-grid"><PreviewCard title="Original image" src={originalUrl} /><PreviewCard title="Transparent result" src={resultUrl} empty={!resultUrl} /></div><div className="file-row"><span className="file-name">{file.name}</span><button className="text-button" onClick={reset} disabled={isProcessing}>Choose another</button></div>{isProcessing && <div className="progress-area" aria-live="polite"><div className="progress-label"><span>{status}</span><span>{progress}%</span></div><div className="progress-track"><div className="progress-bar" style={{ width: `${Math.max(progress, 3)}%` }} /></div></div>}{!isProcessing && !resultUrl && <p className="status-text">{status}</p>}{resultUrl ? <a className="primary-button" href={resultUrl} download={`${file.name.replace(/\.[^/.]+$/, '')}-no-bg.png`}>↓&nbsp; Download PNG</a> : <button className="primary-button" onClick={processImage} disabled={isProcessing}>✦&nbsp; Remove Background</button>}</>}{error && <div className="error-message" role="alert">!&nbsp; {error}</div>}</section><p className="privacy-note">🔒 &nbsp;All processing happens locally in your browser. Your images are never uploaded.</p></main>;
 }
 
-function PreviewCard({ title, src, empty }) { return <div className="preview-card"><div className="card-title"><span>{title}</span>{empty ? <span className="waiting">Waiting for result</span> : <span className="ready-dot">●</span>}</div><div className={`image-frame ${empty ? 'empty-frame' : ''} ${src && !empty ? 'checkerboard' : ''}`}>{src ? <img src={src} alt={title} /> : <div className="empty-state"><span>✦</span><small>Your result will appear here</small></div>}</div></div>; }
+function PreviewCard({ title, src, empty }) { return <div className="preview-card"><div className="card-title"><span>{title}</span>{empty ? <span className="waiting">Waiting for result</span> : <span className="ready-dot">●</span>}</div><div className={`image-frame ${empty ? 'empty-frame' : ''} ${src && !empty ? 'checkerboard' : ''}`}>{src ? <button className="preview-open" type="button" onClick={() => window.open(src, '_blank', 'noopener,noreferrer')} title="Open full-size preview"><img src={src} alt={title} /></button> : <div className="empty-state"><span>✦</span><small>Your result will appear here</small></div>}</div>{src && <small className="preview-hint">Click to view full size</small>}</div>; }
 
 function InfoPage({ page, navigate }) {
   const content = { privacy: { title: 'Privacy Policy', eyebrow: 'YOUR PRIVACY MATTERS', body: <><p>Last updated: September 14, 2026</p><p>Remove Background Images is operated by Platka Software Digital. This tool processes images locally in your browser using WebAssembly and ONNX technology. Your images are not uploaded to, stored on, or transmitted through our servers.</p><h2>Information we collect</h2><p>We do not collect your uploaded images. We may receive basic, anonymous website analytics only when enabled by the hosting platform. We do not sell personal information or use your images to train models.</p><h2>Third-party services</h2><p>The application may download public model files from its delivery infrastructure during the first use. Processing remains on your device. External image URLs are fetched directly by your browser and are subject to the source website’s privacy policy and CORS rules.</p><h2>Contact</h2><p>Questions about privacy can be sent to <a href="mailto:platkasoftwaredigital@gmail.com">platkasoftwaredigital@gmail.com</a>.</p></> }, terms: { title: 'Terms & Conditions', eyebrow: 'SIMPLE, FAIR TERMS', body: <><p>Last updated: September 14, 2026</p><p>By using Remove Background Images, you agree to use the service responsibly and comply with applicable laws. You retain all rights to images you process.</p><h2>Use of the service</h2><p>The tool is provided free of charge on an “as is” basis. Results are generated automatically and may not be perfect. You are responsible for reviewing the result before publishing or using it commercially.</p><h2>Limitations</h2><p>We do not guarantee uninterrupted availability, exact results, or compatibility with every image. Because processing takes place in your browser, performance depends on your device and browser.</p><h2>Contact</h2><p>For questions, contact <a href="mailto:platkasoftwaredigital@gmail.com">platkasoftwaredigital@gmail.com</a>.</p></> }, contact: { title: 'Contact', eyebrow: 'WE WOULD LOVE TO HEAR FROM YOU', body: <><p>Need help, have feedback, or want to discuss a digital product? Reach out to Platka Software Digital.</p><div className="contact-details"><p><strong>Email</strong><br /><a href="mailto:platkasoftwaredigital@gmail.com">platkasoftwaredigital@gmail.com</a></p><p><strong>Phone</strong><br /><a href="tel:+6281111102880">081111102880</a></p><p><strong>Official websites</strong><br /><a href="https://platkadigital.com" target="_blank" rel="noreferrer">platkadigital.com</a><br /><a href="https://platka.io" target="_blank" rel="noreferrer">platka.io</a></p></div></> } }[page];
