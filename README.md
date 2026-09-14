@@ -12,6 +12,7 @@ Live site: [platka-removebg.pages.dev](https://platka-removebg.pages.dev)
 - Original and transparent checkerboard result previews.
 - Client-side background removal with progress feedback.
 - PNG download, responsive mobile layout, and validation up to 10 MB.
+- Full-precision `isnet` quality mode, lossless PNG output, original-resolution preservation, and light alpha-edge cleanup.
 - Privacy Policy, Terms & Conditions, and Contact pages.
 - SEO description, Open Graph tags, canonical URL, JSON-LD, robots.txt, and sitemap.xml.
 

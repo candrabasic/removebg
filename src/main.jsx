@@ -6,6 +6,31 @@ import './styles.css';
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
 const ACCEPTED_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 
+const HIGH_QUALITY_CONFIG = {
+  model: 'isnet',
+  device: 'cpu',
+  rescale: false,
+  output: { format: 'image/png', quality: 1 },
+};
+
+async function refineAlphaEdges(blob) {
+  try {
+    const bitmap = await createImageBitmap(blob);
+    const canvas = document.createElement('canvas');
+    canvas.width = bitmap.width; canvas.height = bitmap.height;
+    const context = canvas.getContext('2d', { willReadFrequently: true });
+    context.drawImage(bitmap, 0, 0); bitmap.close();
+    const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+    for (let index = 3; index < imageData.data.length; index += 4) {
+      if (imageData.data[index] <= 8) imageData.data[index] = 0;
+    }
+    context.putImageData(imageData, 0, 0);
+    return await new Promise((resolve) => canvas.toBlob(resolve, 'image/png', 1)) || blob;
+  } catch {
+    return blob;
+  }
+}
+
 function App() {
   const inputRef = useRef(null);
   const [page, setPage] = useState(() => ['privacy', 'terms', 'contact'].includes(window.location.hash.slice(1)) ? window.location.hash.slice(1) : 'home');
@@ -66,8 +91,9 @@ function App() {
     if (!file || isProcessing) return;
     setIsProcessing(true); setError(''); setProgress(0); setStatus('Loading the AI model in your browser…');
     try {
-      const output = await removeBackground(file, { progress: (key, current, total) => { const percent = total ? Math.min(99, Math.round((current / total) * 100)) : 0; setProgress(percent); setStatus(key?.includes('fetch') ? 'Downloading the AI model for the first time…' : 'Removing background…'); } });
-      setResultUrl(URL.createObjectURL(output)); setProgress(100); setStatus('Done! Your background has been removed.');
+      const output = await removeBackground(file, { ...HIGH_QUALITY_CONFIG, progress: (key, current, total) => { const percent = total ? Math.min(99, Math.round((current / total) * 100)) : 0; setProgress(percent); setStatus(key?.includes('fetch') ? 'Downloading the full-quality AI model…' : 'Removing background with high precision…'); } });
+      const refinedOutput = await refineAlphaEdges(output);
+      setResultUrl(URL.createObjectURL(refinedOutput)); setProgress(100); setStatus('Done! High-quality transparent PNG is ready.');
     } catch (processingError) { console.error(processingError); setError('Could not process this image. Please try another image.'); setStatus('Something went wrong while processing.'); }
     finally { setIsProcessing(false); }
   };
@@ -79,7 +105,7 @@ function App() {
 }
 
 function Home({ inputRef, file, originalUrl, resultUrl, isDragging, setIsDragging, isProcessing, progress, status, error, imageUrl, setImageUrl, isLoadingUrl, selectFile, loadFromUrl, processImage, reset }) {
-  return <main className="home-page"><section className="hero"><div className="hero-logo"><img src="/logo.png" alt="Platka logo" /></div><p className="eyebrow">PRIVATE · FAST · FREE</p><h1>Remove Background<br /><span>Images</span></h1><p className="subtitle">Remove image backgrounds automatically, right in your browser.</p></section><section className="tool-card">{!file ? <><div className={`drop-zone ${isDragging ? 'dragging' : ''}`} onDragOver={(event) => { event.preventDefault(); setIsDragging(true); }} onDragLeave={() => setIsDragging(false)} onDrop={(event) => { event.preventDefault(); setIsDragging(false); selectFile(event.dataTransfer.files?.[0]); }} onClick={() => inputRef.current?.click()} role="button" tabIndex="0" onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') inputRef.current?.click(); }}><div className="upload-icon">↑</div><h2>Drag & drop an image here</h2><p>or click to browse from your device</p><span className="file-hint">JPG · PNG · WEBP <b>•</b> Max. 10 MB</span><input ref={inputRef} type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => selectFile(event.target.files?.[0])} hidden /></div><div className="source-options"><span className="source-divider"><i /> or <i /></span><p className="paste-tip">Paste an image from your clipboard with <kbd>Ctrl</kbd> + <kbd>V</kbd></p><form className="url-form" onSubmit={loadFromUrl}><input value={imageUrl} onChange={(event) => setImageUrl(event.target.value)} placeholder="Paste an image URL" aria-label="Image URL" /><button type="submit" disabled={isLoadingUrl}>{isLoadingUrl ? 'Loading…' : 'Use URL'}</button></form></div></> : <><div className="preview-grid"><PreviewCard title="Original image" src={originalUrl} /><PreviewCard title="Transparent result" src={resultUrl} empty={!resultUrl} /></div><div className="file-row"><span className="file-name">{file.name}</span><button className="text-button" onClick={reset} disabled={isProcessing}>Choose another</button></div>{isProcessing && <div className="progress-area" aria-live="polite"><div className="progress-label"><span>{status}</span><span>{progress}%</span></div><div className="progress-track"><div className="progress-bar" style={{ width: `${Math.max(progress, 3)}%` }} /></div></div>}{!isProcessing && !resultUrl && <p className="status-text">{status}</p>}{resultUrl ? <a className="primary-button" href={resultUrl} download={`${file.name.replace(/\.[^/.]+$/, '')}-no-bg.png`}>↓&nbsp; Download PNG</a> : <button className="primary-button" onClick={processImage} disabled={isProcessing}>✦&nbsp; Remove Background</button>}</>}{error && <div className="error-message" role="alert">!&nbsp; {error}</div>}</section><p className="privacy-note">🔒 &nbsp;All processing happens locally in your browser. Your images are never uploaded.</p></main>;
+  return <main className="home-page"><section className="hero"><div className="hero-logo"><img src="/logo.png" alt="Platka logo" /></div><p className="eyebrow">PRIVATE · FAST · FREE</p><h1>Remove Background<br /><span>Images</span></h1><p className="subtitle">Remove image backgrounds automatically, right in your browser.</p><div className="quality-badge">✦ Full precision AI · Lossless PNG · Local processing</div></section><section className="tool-card">{!file ? <><div className={`drop-zone ${isDragging ? 'dragging' : ''}`} onDragOver={(event) => { event.preventDefault(); setIsDragging(true); }} onDragLeave={() => setIsDragging(false)} onDrop={(event) => { event.preventDefault(); setIsDragging(false); selectFile(event.dataTransfer.files?.[0]); }} onClick={() => inputRef.current?.click()} role="button" tabIndex="0" onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') inputRef.current?.click(); }}><div className="upload-icon">↑</div><h2>Drag & drop an image here</h2><p>or click to browse from your device</p><span className="file-hint">JPG · PNG · WEBP <b>•</b> Max. 10 MB</span><input ref={inputRef} type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => selectFile(event.target.files?.[0])} hidden /></div><div className="source-options"><span className="source-divider"><i /> or <i /></span><p className="paste-tip">Paste an image from your clipboard with <kbd>Ctrl</kbd> + <kbd>V</kbd></p><form className="url-form" onSubmit={loadFromUrl}><input value={imageUrl} onChange={(event) => setImageUrl(event.target.value)} placeholder="Paste an image URL" aria-label="Image URL" /><button type="submit" disabled={isLoadingUrl}>{isLoadingUrl ? 'Loading…' : 'Use URL'}</button></form></div></> : <><div className="preview-grid"><PreviewCard title="Original image" src={originalUrl} /><PreviewCard title="Transparent result" src={resultUrl} empty={!resultUrl} /></div><div className="file-row"><span className="file-name">{file.name}</span><button className="text-button" onClick={reset} disabled={isProcessing}>Choose another</button></div>{isProcessing && <div className="progress-area" aria-live="polite"><div className="progress-label"><span>{status}</span><span>{progress}%</span></div><div className="progress-track"><div className="progress-bar" style={{ width: `${Math.max(progress, 3)}%` }} /></div></div>}{!isProcessing && !resultUrl && <p className="status-text">{status}</p>}{resultUrl ? <a className="primary-button" href={resultUrl} download={`${file.name.replace(/\.[^/.]+$/, '')}-no-bg.png`}>↓&nbsp; Download PNG</a> : <button className="primary-button" onClick={processImage} disabled={isProcessing}>✦&nbsp; Remove Background</button>}</>}{error && <div className="error-message" role="alert">!&nbsp; {error}</div>}</section><p className="privacy-note">🔒 &nbsp;All processing happens locally in your browser. Your images are never uploaded.</p></main>;
 }
 
 function PreviewCard({ title, src, empty }) { return <div className="preview-card"><div className="card-title"><span>{title}</span>{empty ? <span className="waiting">Waiting for result</span> : <span className="ready-dot">●</span>}</div><div className={`image-frame ${empty ? 'empty-frame' : ''} ${src && !empty ? 'checkerboard' : ''}`}>{src ? <img src={src} alt={title} /> : <div className="empty-state"><span>✦</span><small>Your result will appear here</small></div>}</div></div>; }
