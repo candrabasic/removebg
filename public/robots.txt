@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://platka-removebg.pages.dev/sitemap.xml
